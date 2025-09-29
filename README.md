@@ -34,8 +34,8 @@ It allows users to:
 
 ## 📸 Screenshots  
 
-![Main Interface](screenshots/main.jpg)  
-![Expense List](screenshots/list.jpg)  
+![Main Interface](Screenshots/main.jpg)  
+![Expense List](Screenshots/list.jpg)  
 
 ---
 
