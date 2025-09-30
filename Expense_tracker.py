@@ -17,9 +17,13 @@ c.execute("""
 """)
 conn.commit()
 
+# Globals for mapping UI rows -> DB ids and tracking current filter
+displayed_ids = []
+current_filter = date.today().isoformat()
+
 # ---------------- Functions ----------------
 def add_expense():
-    desc = desc_entry.get()
+    desc = desc_entry.get().strip()
     try:
         amt = float(amount_entry.get())
     except ValueError:
@@ -30,71 +34,97 @@ def add_expense():
         messagebox.showwarning("Input Error", "Please enter a description!")
         return
 
-    # Save to selected date, not always today
-    chosen = calendar_entry.get()
+    chosen_date = calendar_entry.get().strip()
     try:
-        datetime.strptime(chosen, "%Y-%m-%d")  # validate date format
+        # validate YYYY-MM-DD
+        datetime.strptime(chosen_date, "%Y-%m-%d")
     except ValueError:
         messagebox.showwarning("Date Error", "Enter date as YYYY-MM-DD")
         return
 
     c.execute("INSERT INTO expenses (description, amount, expense_date) VALUES (?, ?, ?)",
-              (desc, amt, chosen))
+              (desc, amt, chosen_date))
     conn.commit()
     desc_entry.delete(0, tk.END)
     amount_entry.delete(0, tk.END)
-    load_expenses(chosen)
+    load_expenses(chosen_date)
+
 
 def delete_expense():
-    try:
-        selected = expense_list.curselection()[0]
-        row_text = expense_list.get(selected)
-        row_parts = row_text.split(" | ")
-
-        # row_parts[1] = description, row_parts[2] = amount, row_parts[3] = date
-        desc = row_parts[1]
-        amt = float(row_parts[2].replace("$", ""))
-        exp_date = row_parts[3]
-
-        # delete the matching row from DB
-        c.execute("DELETE FROM expenses WHERE description=? AND amount=? AND expense_date=? LIMIT 1",
-                  (desc, amt, exp_date))
-        conn.commit()
-        load_expenses(selected_date.get())
-    except IndexError:
+    sel = expense_list.curselection()
+    if not sel:
         messagebox.showwarning("Selection Error", "Please select an expense to delete!")
+        return
+
+    idx = sel[0]
+    try:
+        row_id = displayed_ids[idx]
+    except (IndexError, NameError):
+        messagebox.showwarning("Selection Error", "Unable to determine selected record.")
+        return
+
+    # Confirm delete
+    if not messagebox.askyesno("Confirm Delete", "Delete selected expense?"):
+        return
+
+    c.execute("DELETE FROM expenses WHERE id = ?", (row_id,))
+    conn.commit()
+    # reload same filter
+    load_expenses(current_filter)
+
 
 def load_expenses(filter_date=None):
-    expense_list.delete(0, tk.END)
+    global displayed_ids, current_filter
+    displayed_ids = []
 
+    # Determine filter_date if none provided
+    if filter_date is None:
+        sel = selected_date.get()
+        if sel == "Today":
+            filter_date = date.today().isoformat()
+        elif sel == "All":
+            filter_date = "All"
+        else:
+            filter_date = sel
+
+    # Normalize special tokens
     if filter_date == "Today":
         filter_date = date.today().isoformat()
 
-    if filter_date == "All":
-        c.execute("SELECT description, amount, expense_date FROM expenses ORDER BY expense_date ASC, id ASC")
-    elif filter_date:
-        c.execute("SELECT description, amount, expense_date FROM expenses WHERE expense_date = ? ORDER BY id ASC", (filter_date,))
-    else:
-        c.execute("SELECT description, amount, expense_date FROM expenses ORDER BY expense_date ASC, id ASC")
+    current_filter = filter_date
 
-    rows = c.fetchall()
-    total = 0
-    for idx, row in enumerate(rows, start=1):  # local numbering
-        expense_list.insert(tk.END, f"{idx} | {row[0]} | ${row[1]:.2f} | {row[2]}")
-        total += row[1]
+    expense_list.delete(0, tk.END)
+
+    if filter_date == "All":
+        c.execute("SELECT id, description, amount, expense_date FROM expenses ORDER BY expense_date ASC, id ASC")
+        rows = c.fetchall()
+    else:
+        # assume filter_date is a YYYY-MM-DD string
+        c.execute("SELECT id, description, amount, expense_date FROM expenses WHERE expense_date = ? ORDER BY id ASC", (filter_date,))
+        rows = c.fetchall()
+
+    total = 0.0
+    for idx, (row_id, desc, amt, exp_date) in enumerate(rows, start=1):
+        displayed_ids.append(row_id)
+        expense_list.insert(tk.END, f"{idx} | {desc} | ${amt:.2f} | {exp_date}")
+        total += amt
+
     total_label.config(text=f"Total Spent: ${total:.2f}")
 
+
 def show_by_date():
-    chosen = calendar_entry.get()
+    chosen = calendar_entry.get().strip()
     try:
         datetime.strptime(chosen, "%Y-%m-%d")  # validate date format
         load_expenses(chosen)
     except ValueError:
         messagebox.showwarning("Date Error", "Enter date as YYYY-MM-DD")
 
+
 def exit_app():
     conn.close()
     root.destroy()
+
 
 # ---------------- GUI Setup ----------------
 root = tk.Tk()
@@ -103,7 +133,7 @@ root.geometry("700x500")
 root.config(bg="lightblue")
 
 # Title
-title_label = tk.Label(root, text=" Expense Tracker", font=("Arial", 18, "bold"), bg="lightblue")
+title_label = tk.Label(root, text="Expense Tracker", font=("Arial", 18, "bold"), bg="lightblue")
 title_label.pack(pady=10)
 
 # Entry Frame
@@ -112,7 +142,7 @@ entry_frame.pack(pady=5)
 
 desc_label = tk.Label(entry_frame, text="Description:", font=("Arial", 12), bg="lightblue")
 desc_label.grid(row=0, column=0, padx=5, pady=5)
-desc_entry = tk.Entry(entry_frame, font=("Arial", 12), width=20)
+desc_entry = tk.Entry(entry_frame, font=("Arial", 12), width=30)
 desc_entry.grid(row=0, column=1, padx=5, pady=5)
 
 amount_label = tk.Label(entry_frame, text="Amount:", font=("Arial", 12), bg="lightblue")
